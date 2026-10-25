@@ -234,6 +234,13 @@ async def delete_movie(code: int) -> bool:
         return True
 
 
+async def rename_movie(code: int, title: str) -> bool:
+    async with Session() as s:
+        res = await s.execute(update(Movie).where(Movie.code == code).values(title=title))
+        await s.commit()
+        return res.rowcount > 0
+
+
 async def inc_views(movie_id: int) -> None:
     async with Session() as s:
         await s.execute(update(Movie).where(Movie.id == movie_id).values(views=Movie.views + 1))

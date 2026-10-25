@@ -33,3 +33,7 @@ class AddAdmin(StatesGroup):
 
 class BanUser(StatesGroup):
     uid = State()
+
+
+class Bulk(StatesGroup):
+    active = State()

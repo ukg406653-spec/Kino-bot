@@ -79,6 +79,7 @@ def admin_kb(is_owner: bool, protect: bool) -> InlineKeyboardMarkup:
 
     rows = [
         [btn("➕ Kino qo'shish", "adm:addmovie"), btn("🗑 Kino o'chirish", "adm:delmovie")],
+        [btn("📥 Ommaviy qo'shish", "adm:bulk")],
         [btn("📋 Kinolar ro'yxati", "adm:list:0"), btn("📊 Statistika", "adm:stats")],
         [btn("📢 Majburiy kanallar", "adm:channels"), btn("📣 Post kanali", "adm:postch")],
         [btn("✉️ Xabar yuborish", "adm:bc"), btn("🚫 Ban / Unban", "adm:ban")],

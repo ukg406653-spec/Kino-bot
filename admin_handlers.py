@@ -1,6 +1,7 @@
 import asyncio
 import html
 import logging
+import re
 from typing import Optional
 
 from aiogram import Bot, F, Router
@@ -31,6 +32,7 @@ from states import (
     AddMovie,
     BanUser,
     Broadcast,
+    Bulk,
     DelMovie,
     SetPostChannel,
 )
@@ -113,6 +115,105 @@ async def cb_protect(c: CallbackQuery):
     await db.set_setting("protect", "0" if cur else "1")
     await c.answer("Himoya " + ("o'chirildi ❌" if cur else "yoqildi ✅"))
     await show_panel(c.message, c.from_user.id, edit=True)
+
+
+# ───────────────────────── Ommaviy qo'shish ─────────────────────────
+_bulk_lock = asyncio.Lock()  # forward qilingan kinolar parallel kelsa ham kodlar takrorlanmasin
+
+
+def guess_title(m: Message, code: int) -> str:
+    """Nomni caption'dan, bo'lmasa fayl nomidan oladi."""
+    for line in (m.caption or "").splitlines():
+        t = re.sub(r"https?://\S+|[#@]\S+", "", line)
+        t = re.sub(r"^[^\w]+", "", t).strip(" \t-–—•|:")
+        if t:
+            return t[:200]
+    media = m.video or m.document or m.animation
+    name = getattr(media, "file_name", None) if media else None
+    if name:
+        name = re.sub(r"\.[A-Za-z0-9]{2,4}$", "", name)
+        name = re.sub(r"[_.]+", " ", name).strip()
+        if name:
+            return name[:200]
+    return f"Kino {code}"
+
+
+def bulk_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✅ Tugatish", callback_data="bulk:done")]]
+    )
+
+
+@router.callback_query(F.data == "adm:bulk")
+async def bulk_start(c: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.set_state(Bulk.active)
+    await state.update_data(items=[])
+    await c.answer()
+    await c.message.edit_text(
+        "📥 <b>Ommaviy qo'shish</b>\n\n"
+        "Kinolarni shu yerga <b>forward</b> qiling (xohlagancha). Har biriga kod ketma-ket beriladi, "
+        "nomi forward qilingan postning captionidan olinadi (caption bo'lmasa fayl nomidan).\n\n"
+        "Tugagach «✅ Tugatish» tugmasini yoki /done ni bosing.",
+        reply_markup=bulk_kb(),
+    )
+
+
+async def _bulk_finish(target: Message, state: FSMContext, user_id: int):
+    d = await state.get_data()
+    items = d.get("items", [])
+    await state.clear()
+    if not items:
+        await target.answer("Hech narsa qo'shilmadi.")
+    else:
+        lines = [f"<code>{c}</code> — {html.escape(t)}" for c, t in items]
+        shown = lines[-60:]
+        more = f"… (oldingi {len(lines) - 60} ta ko'rsatilmadi)\n" if len(lines) > 60 else ""
+        await target.answer(
+            f"✅ <b>{len(items)} ta kino qo'shildi</b>\n\n{more}" + "\n".join(shown)
+            + "\n\nNomni o'zgartirish: <code>/rename KOD Yangi nom</code>"
+        )
+    await show_panel(target, user_id)
+
+
+@router.callback_query(Bulk.active, F.data == "bulk:done")
+async def bulk_done_cb(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await _bulk_finish(c.message, state, c.from_user.id)
+
+
+@router.message(Bulk.active, Command("done"))
+async def bulk_done_cmd(m: Message, state: FSMContext):
+    await _bulk_finish(m, state, m.from_user.id)
+
+
+@router.message(Bulk.active)
+async def bulk_item(m: Message, state: FSMContext):
+    media = extract_media(m)
+    if not media:
+        await m.answer("⚠️ Video yoki fayl forward qiling. Tugatish: /done", reply_markup=bulk_kb())
+        return
+    async with _bulk_lock:
+        code = await db.next_code()
+        title = guess_title(m, code)
+        await db.add_movie(
+            code=code, title=title, description="", file_id=media[0], file_type=media[1]
+        )
+        d = await state.get_data()
+        items = d.get("items", [])
+        items.append([code, title])
+        await state.update_data(items=items)
+    await m.reply(f"✅ <code>{code}</code> — {html.escape(title)}")
+
+
+@router.message(Command("rename"))
+async def cmd_rename(m: Message, command: CommandObject):
+    parts = (command.args or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[0].isdigit():
+        await m.answer("Ishlatilishi: <code>/rename 534 Yangi nom</code>")
+        return
+    ok = await db.rename_movie(int(parts[0]), parts[1].strip()[:200])
+    await m.answer("✅ Nom o'zgartirildi." if ok else "⚠️ Bunday kodli kino topilmadi.")
 
 
 # ───────────────────────── Kino qo'shish ─────────────────────────
